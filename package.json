@@ -1,0 +1,33 @@
+{
+  "name": "boosty-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Boosty (boosty.to) — built on the unofficial boosty-api client",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "boosty-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "login": "node dist/index.js login",
+    "test": "tsc && node --test dist/check.test.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "mcp",
+    "boosty"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "boosty-api": "^0.2.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2"
+  }
+}
