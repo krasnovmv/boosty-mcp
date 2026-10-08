@@ -212,15 +212,11 @@ tool(
   "Media of a blog gathered from its posts (images, videos, audio), grouped by post.",
   {
     blog,
-    type: z.enum(["all", "image", "ok_video", "audio_file"]).optional().describe("Media type, default all"),
+    type: z.enum(["all", "image", "video", "audio"]).optional().describe("Media type, default all"),
     limit,
     offset,
   },
-  // Raw request: api.media.list() of boosty-api 0.2.0 crashes on the real answer ({ data: { mediaPosts } })
-  (args) =>
-    api.request("GET", `/v1/blog/${args.blog}/media_album/`, {
-      params: { type: args.type ?? "all", limit_by: "media", limit: args.limit, offset: args.offset },
-    })
+  (args) => api.media.list(args.blog, { type: args.type, limit: args.limit, offset: args.offset })
 );
 
 tool(
