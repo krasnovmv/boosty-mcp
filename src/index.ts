@@ -10,17 +10,23 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { API, Auth, BoostyError, FileAuthDataResolver, textBlock } from "boosty-api";
+import {
+  API,
+  Auth,
+  BoostyError,
+  FileAuthDataResolver,
+  type NotificationSwitch,
+  type NotificationTransport,
+  textBlock,
+  TokenPersistError,
+} from "boosty-api";
 import { z } from "zod";
 import { AUTH_FILE, browserLogin } from "./auth.js";
 import { slim, textBlocks } from "./slim.js";
 
-// boosty-api logs every request with console.log, and stdout belongs to the MCP protocol
-console.log = console.error;
-
 /** Client bound to the stored tokens; boosty-api refreshes them and writes them back itself. */
 function createApi(): API {
-  return new API(undefined, new Auth(new FileAuthDataResolver(AUTH_FILE)));
+  return new API({ auth: new Auth(new FileAuthDataResolver(AUTH_FILE)) });
 }
 
 let api = createApi();
@@ -52,9 +58,13 @@ function textResult(text: string, isError = false) {
 
 function describeError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  // An anonymous 401 surfaces as boosty-api's "No refresh token…" error, hence the text match
-  const isAuthProblem = (error instanceof BoostyError && error.statusCode === 401) || /refresh/i.test(message);
-  return `❌ ${message}${isAuthProblem ? "\nNot logged in or the session expired — call the `login` tool." : ""}`;
+  let hint = "";
+  if (error instanceof BoostyError && error.statusCode === 401) {
+    hint = "\nNot logged in or the session expired — call the `login` tool.";
+  } else if (error instanceof TokenPersistError) {
+    hint = `\nThe refreshed tokens could not be written to ${AUTH_FILE} — check that the file is writable.`;
+  }
+  return `❌ ${message}${hint}`;
 }
 
 /** Register a tool whose result is the (slimmed) JSON answer of the API. */
@@ -82,12 +92,22 @@ function tool<Shape extends z.ZodRawShape>(
   );
 }
 
-// Both go into URL paths unescaped inside boosty-api; "." and ".." would climb out of /v1/blog/<name>/
+// Both go into URL paths; "." and ".." would climb out of /v1/blog/<name>/ (boosty-api rejects them too)
 const blog = z.string().regex(/^(?!\.+$)[\w.-]+$/).describe("Blog name from its URL: boosty.to/<blog>");
 const postId = z.string().regex(/^[\w-]+$/).describe("Post id (UUID from the post URL)");
 const limit = z.number().int().positive().optional().describe("Max items per page");
 const replyLimit = z.number().int().optional().describe("Replies to embed per comment");
 const offset = z.string().optional().describe("Pagination cursor: `extra.offset` (or `offset`) of the previous page");
+const skip = z.number().int().min(0).optional().describe("Items to skip");
+const unixTime = z.number().int().describe("Unix time, seconds");
+const order = z.enum(["gt", "lt"]).optional().describe("Sort direction: gt — descending, lt — ascending");
+const levelId = z.number().int().describe("Subscription level id (list_subscription_levels)");
+const userId = z.number().int().describe("Boosty user id");
+const page = (args: { limit?: number; offset?: string }) => ({ limit: args.limit, offset: args.offset });
+const reaction = z
+  .string()
+  .min(1)
+  .describe('Reaction name: "like", "dislike", "heart", "fire", "laugh", "wonder", "sad", "angry", …');
 
 // ─── Account ────────────────────────────────────────────
 
@@ -115,6 +135,133 @@ tool("get_current_user", "The logged-in Boosty user (id, name, email, own blog).
   api.user.current()
 );
 
+tool(
+  "list_subscriptions",
+  "Blogs the logged-in user is subscribed to.",
+  { limit, offset: skip, with_follow: z.boolean().optional().describe("Include free follows") },
+  (args) => api.user.subscriptions({ limit: args.limit, offset: args.offset, withFollow: args.with_follow })
+);
+
+tool("list_sessions", "Devices the account is logged in on; `flags.isCurrent` marks this server's session.", {}, () =>
+  api.user.sessions()
+);
+
+const transport = z.enum(["standalone", "mobile_push", "telegram", "mail"] as const satisfies readonly NotificationTransport[]);
+
+tool(
+  "get_notification_settings",
+  "Notification switches of the account per transport (site, push, Telegram, e-mail).",
+  { transports: z.array(transport).min(1).optional().describe("Default: all four") },
+  (args) => api.user.notificationSettings(args.transports)
+);
+
+tool(
+  "list_payment_cards",
+  "Saved payment cards of the logged-in user.",
+  { currency: z.string().optional(), with_deleted: z.boolean().optional() },
+  (args) => api.user.paymentCards({ currency: args.currency, withDeleted: args.with_deleted })
+);
+
+tool("list_blog_currencies", "Currencies the logged-in user may choose for their blog.", {}, () =>
+  api.user.availableBlogCurrencies()
+);
+
+tool(
+  "update_profile",
+  "Change the account profile; only the given fields are sent. Experimental: the request is reconstructed " +
+    "from the web client.",
+  {
+    name: z.string().min(1).optional(),
+    email: z.string().email().optional(),
+    can_view_adult_content: z.boolean().optional(),
+    send_msg_rule: z.string().optional().describe("Who may message the user, passed to Boosty as is"),
+    send_msg_level_id: levelId.optional(),
+  },
+  (args) =>
+    api.user.updateProfile({
+      name: args.name,
+      email: args.email,
+      canViewAdultContent: args.can_view_adult_content,
+      sendMsgRule: args.send_msg_rule,
+      sendMsgLevelId: args.send_msg_level_id,
+    }),
+  "write"
+);
+
+tool(
+  "update_notification_setting",
+  "Turn one notification switch on or off for one transport. Experimental: the endpoint is reconstructed " +
+    "from the web client.",
+  {
+    transport,
+    switch: z.enum([
+      "new_comment",
+      "new_donation",
+      "new_message",
+      "buy_message",
+      "other_news",
+      "new_promo",
+      "new_referal",
+      "new_target",
+      "new_post",
+      "buy_post",
+      "buy_bundle",
+      "new_referal_blogger",
+      "new_reply",
+      "new_stream",
+      "new_subscriber",
+      "level_subscribers_limit_reached",
+    ] as const satisfies readonly NotificationSwitch[]),
+    value: z.boolean(),
+  },
+  (args) => api.user.updateNotificationSetting(args.transport, args.switch, args.value),
+  "write"
+);
+
+tool(
+  "update_dialog_settings",
+  "Change who may start a conversation with the user; omitted switches keep their current value. " +
+    "Experimental: the endpoint is reconstructed from the web client.",
+  {
+    send_msg_level_id: levelId.optional().describe("Minimal subscription level that may write"),
+    can_send_all: z.boolean().optional(),
+    can_send_donation: z.boolean().optional(),
+    can_send_my_authors: z.boolean().optional(),
+    can_send_paid_subscribers: z.boolean().optional(),
+    can_send_subscribers: z.boolean().optional(),
+    can_send_payers: z.boolean().optional(),
+  },
+  (args) =>
+    api.user.updateDialogSettings({
+      sendMsgLevelId: args.send_msg_level_id,
+      canSendAll: args.can_send_all,
+      canSendDonation: args.can_send_donation,
+      canSendMyAuthors: args.can_send_my_authors,
+      canSendPaidSubscribers: args.can_send_paid_subscribers,
+      canSendSubscribers: args.can_send_subscribers,
+      canSendPayers: args.can_send_payers,
+    }),
+  "write"
+);
+
+tool(
+  "set_locale",
+  'Set the interface language of the account, e.g. "ru" or "en". Experimental: the endpoint is reconstructed ' +
+    "from the web client.",
+  { locale: z.string().min(2) },
+  (args) => api.user.setLocale(args.locale),
+  "write"
+);
+
+tool(
+  "end_sessions",
+  "Log the account out on its devices. It cannot target one device and most likely ends EVERY session, this " +
+    "server's included — a new `login` is needed afterwards. Ask the user before calling. Experimental.",
+  { including_current: z.literal(true).describe("Confirmation that this session may end too") },
+  () => api.user.endSessions({ includingCurrent: true }),
+  "destructive"
+);
+
 // ─── Blog ───────────────────────────────────────────────
 
 tool("get_blog", "Blog profile: title, description, owner, counters, whether the current user is subscribed.", { blog }, (args) =>
@@ -136,7 +283,7 @@ tool(
     limit,
     offset,
     sort_by: z.string().optional().describe('Sort field, e.g. "on_time" (subscription date) or "payments"'),
-    order: z.enum(["gt", "lt"]).optional().describe("Sort direction: gt — descending, lt — ascending"),
+    order,
     with_followers: z.boolean().optional().describe("Include free followers"),
   },
   (args) =>
@@ -152,16 +299,277 @@ tool(
 tool("list_blacklist", "Users blacklisted in a blog (blog owner only).", { blog }, (args) => api.blog.blacklist(args.blog));
 
 tool(
-  "get_sales",
-  "Income feed of the logged-in author: subscription payments, donations, one-time purchases. Boosty answers " +
-    '"Category disabled" when monetization statistics are not enabled for the account.',
+  "get_subscription_level",
+  "One subscription level of a blog with its details.",
   {
-    type: z.enum(["subscription", "donation", "purchase", "single", "all"]).optional(),
+    blog,
+    level_id: levelId,
+    with_content_counters: z.boolean().optional().describe("Add the number of posts per content type"),
+  },
+  (args) => api.blog.subscriptionLevel(args.blog, args.level_id, { withContentCounters: args.with_content_counters })
+);
+
+tool(
+  "list_unsubscribe_reasons",
+  'Answers to the "why did you unsubscribe" survey (blog owner only).',
+  {
+    blog,
     limit,
     offset,
-    period: z.string().optional().describe("Period filter, passed to Boosty as is"),
+    sort_by: z.string().optional().describe("Sort field, passed to Boosty as is"),
+    order,
+    level_ids: z.array(levelId).optional(),
+    answers: z.array(z.number().int()).optional().describe("Only these answer ids"),
+    from: unixTime.optional(),
+    to: unixTime.optional(),
   },
-  (args) => api.income.sales(args)
+  ({ blog: blogName, sort_by, level_ids, ...options }) =>
+    api.blog.unsubscribeReasons(blogName, { ...options, sortBy: sort_by, levelIds: level_ids })
+);
+
+// ─── Goals ──────────────────────────────────────────────
+
+const targetId = z.number().int().describe("Goal id (list_targets)");
+const targetType = z.enum(["money", "subscribers"]);
+const targetFields = {
+  description: z.string().min(1),
+  target_sum: z.number().positive().describe("Sum in the blog currency, or the number of subscribers"),
+};
+
+tool(
+  "list_targets",
+  "Goals of a blog (the progress bars: money or subscribers).",
+  {
+    blog,
+    type: targetType.optional(),
+    show_deleted: z.boolean().optional().describe("Include finished and removed goals"),
+  },
+  (args) => api.targets.list(args.blog, { type: args.type, showDeleted: args.show_deleted })
+);
+
+tool("get_target", "One goal.", { target_id: targetId, currency: z.string().optional() }, (args) =>
+  api.targets.get(args.target_id, { currency: args.currency })
+);
+
+tool(
+  "create_target",
+  "Create a goal in the user's own blog. Experimental: the endpoint is reconstructed from the web client.",
+  { blog, type: targetType, ...targetFields },
+  (args) =>
+    args.type === "money"
+      ? api.targets.createMoney(args.blog, args.description, args.target_sum)
+      : api.targets.createSubscribers(args.blog, args.description, args.target_sum),
+  "write"
+);
+
+tool(
+  "update_target",
+  "Change the description and sum of a goal (both are required). Experimental: the endpoint is reconstructed " +
+    "from the web client.",
+  { target_id: targetId, ...targetFields },
+  (args) => api.targets.edit(args.target_id, { description: args.description, targetSum: args.target_sum }),
+  "write"
+);
+
+tool(
+  "delete_target",
+  "Remove a goal. Experimental: the endpoint is reconstructed from the web client.",
+  { target_id: targetId },
+  (args) => api.targets.remove(args.target_id),
+  "destructive"
+);
+
+// ─── Income ─────────────────────────────────────────────
+// Blog owner only. Donation payers and payout data carry e-mails and payout details.
+
+const salesList = { blog, limit, offset, sort_by: z.enum(["time", "amount"]).optional(), order };
+const paidKind = z.enum(["post", "bundle"]).describe("Paid posts or paid bundles");
+
+tool(
+  "list_donations",
+  "Donations received by the blog: donor (with e-mail), amount, message, what it was attached to.",
+  {
+    ...salesList,
+    type: z.enum(["post", "dialog"]).optional().describe("Only donations attached to posts or to dialogs"),
+    target_id: z.number().int().optional().describe("Only donations of this post or dialog"),
+  },
+  ({ blog: blogName, sort_by, target_id, ...options }) =>
+    api.income.donations(blogName, { ...options, sortBy: sort_by, targetId: target_id })
+);
+
+tool(
+  "list_post_sales",
+  "Sales of paid posts of the blog.",
+  { ...salesList, post_ids: z.array(postId).optional().describe("Only these posts") },
+  ({ blog: blogName, sort_by, post_ids, ...options }) =>
+    api.income.postSales(blogName, { ...options, sortBy: sort_by, postIds: post_ids })
+);
+
+tool(
+  "list_bundle_sales",
+  "Sales of paid bundles of the blog.",
+  { ...salesList, bundle_ids: z.array(z.number().int()).optional().describe("Only these bundles") },
+  ({ blog: blogName, sort_by, bundle_ids, ...options }) =>
+    api.income.bundleSales(blogName, { ...options, sortBy: sort_by, bundleIds: bundle_ids })
+);
+
+tool("list_holds", "Payments the platform still holds before they reach the balance.", { blog, limit, offset }, (args) =>
+  api.income.holds(args.blog, page(args))
+);
+
+tool(
+  "list_broadcast_sales",
+  "Statistics of paid mass mailings to dialogs: sent, viewed, sold, earned.",
+  { blog, limit, offset },
+  (args) => api.income.broadcastSales(args.blog, page(args))
+);
+
+tool(
+  "get_paid_sales_by_date",
+  "Sales of paid posts or bundles within a time range.",
+  { blog, kind: paidKind, from: unixTime, to: unixTime },
+  (args) =>
+    args.kind === "post"
+      ? api.income.postSalesByDate(args.blog, args.from, args.to)
+      : api.income.bundleSalesByDate(args.blog, args.from, args.to)
+);
+
+tool(
+  "get_paid_sales_days",
+  "Days of one month that have sales of paid posts or bundles.",
+  { blog, kind: paidKind, date: unixTime.describe("Any unix time (seconds) inside the month") },
+  (args) =>
+    args.kind === "post" ? api.income.postSalesDays(args.blog, args.date) : api.income.bundleSalesDays(args.blog, args.date)
+);
+
+tool("list_payout_methods", "Payout systems Boosty offers (system, currency).", {}, () => api.income.payoutMethods());
+
+tool(
+  "list_payouts",
+  "Payout destinations bound to the blog: priority, active flag, last payout status. Holds the owner's " +
+    "private payout details.",
+  { blog },
+  (args) => api.income.payouts(args.blog)
+);
+
+tool("list_payout_history", "History of payouts to the blog owner.", { blog, limit, offset }, (args) =>
+  api.income.payoutHistory(args.blog, page(args))
+);
+
+tool("get_default_currency", "Default currency Boosty picks for a guest (asked anonymously).", {}, () =>
+  api.income.defaultCurrency()
+);
+
+// ─── Statistics ─────────────────────────────────────────
+// Blog owner only: the numbers of the creator dashboard.
+
+const sourceStat = {
+  blog,
+  type: z.enum(["referer", "utm"]).describe("What to group by"),
+  period: z.enum(["day", "week", "month"]),
+  limit,
+  offset,
+  order,
+  timestamp: unixTime.optional(),
+};
+const reportType = z.enum(["donations", "subscriptions", "holds", "payouts"]);
+
+tool("get_stats_summary", "Balance, income, holds, payouts and follower count of the blog.", { blog }, (args) =>
+  api.stats.summary(args.blog)
+);
+
+tool(
+  "get_stats_metrics",
+  "Money and counts per source for a period: total, subscriptions, donations, new and lost subscribers.",
+  { blog, from: unixTime, to: unixTime },
+  (args) => api.stats.metrics(args.blog, args.from, args.to)
+);
+
+tool(
+  "get_stats_charts",
+  "Daily series per metric, newest first.",
+  { blog, limit, last_time: unixTime.optional().describe("Paging cursor: the oldest time of the previous page") },
+  (args) => api.stats.charts(args.blog, { limit: args.limit, lastTime: args.last_time })
+);
+
+tool(
+  "list_stats_events",
+  "Money and subscription events of the blog (subscribe, unsubscribe, recurrent payment, post purchase, " +
+    "donation, payout). Rows carry the subscriber's e-mail.",
+  {
+    blog,
+    limit,
+    offset,
+    from: unixTime.optional(),
+    to: unixTime.optional(),
+    event_types: z
+      .array(z.string())
+      .optional()
+      .describe('E.g. "subscribe", "unsubscribe", "recurrent", "buy_post", "donation_target", "payout"'),
+    user_ids: z.array(userId).optional(),
+  },
+  ({ blog: blogName, event_types, user_ids, ...options }) =>
+    api.stats.events(blogName, { ...options, eventTypes: event_types, userIds: user_ids })
+);
+
+tool(
+  "list_visit_sources",
+  "Visits of the blog grouped by referer or utm tag.",
+  { ...sourceStat, sort_by: z.enum(["view_count", "view_uniq_count"]).optional() },
+  ({ blog: blogName, sort_by, ...options }) => api.stats.visits(blogName, { ...options, sortBy: sort_by })
+);
+
+tool(
+  "list_payment_sources",
+  "Payments of the blog grouped by referer or utm tag.",
+  sourceStat,
+  ({ blog: blogName, ...options }) => api.stats.paymentSources(blogName, options)
+);
+
+tool("get_referral_stats", "Referral programme totals of the blog.", { blog }, (args) => api.stats.referrals(args.blog));
+
+tool(
+  "list_referral_users",
+  "Users brought in by the referral programme.",
+  { blog, limit, offset, only_bloggers: z.boolean().optional() },
+  (args) => api.stats.referralUsers(args.blog, { ...page(args), onlyBloggers: args.only_bloggers })
+);
+
+tool(
+  "search_subscribers",
+  "Search among the subscribers of the blog by name.",
+  { blog, query: z.string().min(3).describe("At least 3 characters"), limit },
+  (args) => api.stats.searchUsers(args.blog, args.query, { limit: args.limit })
+);
+
+tool(
+  "get_post_stats",
+  "Statistics of one post. Experimental: the endpoint is reconstructed from the web client.",
+  { blog, post_id: postId },
+  (args) => api.stats.post(args.blog, args.post_id)
+);
+
+tool(
+  "build_report",
+  "Build a new report file (donations, subscriptions, holds or payouts) and return its descriptor; " +
+    "`report.url` is the download link. Every call creates a new file — use get_report_info for the last one.",
+  {
+    blog,
+    type: reportType,
+    from: unixTime.optional(),
+    to: unixTime.optional(),
+    period: z.string().optional().describe('Period name instead of from/to, e.g. "month"'),
+    separator: z.string().optional().describe("Column separator of the file"),
+  },
+  ({ blog: blogName, type, ...options }) => api.stats.report(blogName, type, options),
+  "write"
+);
+
+tool(
+  "get_report_info",
+  "The last built report of a type; `report` is null when there is none.",
+  { blog, type: reportType },
+  (args) => api.stats.reportInfo(args.blog, args.type)
 );
 
 // ─── Posts ──────────────────────────────────────────────
@@ -174,14 +582,20 @@ tool(
     limit,
     offset,
     comments_limit: z.number().int().optional().describe("Comments to embed per post"),
-    from_ts: z.number().int().optional().describe("Only posts published after this unix time (seconds)"),
-    to_ts: z.number().int().optional().describe("Only posts published before this unix time (seconds)"),
+    reply_limit: replyLimit,
+    level_id: levelId.optional().describe("Only posts of this subscription level"),
+    tags_ids: z.array(z.number().int()).optional().describe("Only posts with these tag ids"),
+    from_ts: unixTime.optional().describe("Only posts published after this unix time (seconds)"),
+    to_ts: unixTime.optional().describe("Only posts published before this unix time (seconds)"),
   },
   (args) =>
     api.posts.list(args.blog, {
       limit: args.limit ?? 10,
       offset: args.offset,
       commentsLimit: args.comments_limit,
+      replyLimit: args.reply_limit,
+      levelId: args.level_id,
+      tagsIds: args.tags_ids?.join(","),
       fromTs: args.from_ts,
       toTs: args.to_ts,
     })
@@ -294,7 +708,7 @@ tool(
     limit,
     offset,
   },
-  (args) => api.media.list(args.blog, { type: args.type, limit: args.limit, offset: args.offset })
+  (args) => api.media.list(args.blog, { type: args.type, ...page(args) })
 );
 
 tool(
@@ -308,7 +722,7 @@ tool(
   "search_blogs",
   "Search Boosty blogs by name (requires login).",
   { query: z.string(), limit, offset },
-  (args) => api.feed.searchBlogs(args.query, { limit: args.limit, offset: args.offset })
+  (args) => api.feed.searchBlogs(args.query, page(args))
 );
 
 tool(
@@ -327,23 +741,125 @@ tool(
   "write"
 );
 
+tool(
+  "react_to_post",
+  "Put a reaction on a post (replaces the previous one). Experimental: the endpoint is reconstructed from the web client.",
+  { blog, post_id: postId, reaction },
+  (args) => api.social.reactToPost(args.blog, args.post_id, args.reaction),
+  "write"
+);
+
+tool(
+  "remove_post_reaction",
+  "Remove the user's reaction from a post. Experimental: the endpoint is reconstructed from the web client.",
+  { blog, post_id: postId },
+  (args) => api.social.removePostReaction(args.blog, args.post_id),
+  "write"
+);
+
+// ─── Search ─────────────────────────────────────────────
+
+const searchPosts = {
+  query: z.string().min(1),
+  limit,
+  offset,
+  only_allowed: z.boolean().optional().describe("Only posts the user has access to"),
+  from: unixTime.optional(),
+  to: unixTime.optional(),
+};
+
+tool(
+  "search_feed_posts",
+  "Full-text search of posts across Boosty.",
+  {
+    ...searchPosts,
+    only_bought: z.boolean().optional().describe("Only posts the user bought"),
+    tag_ids: z.array(z.number().int()).optional().describe("Only posts with these feed tags (search_feed_tags)"),
+  },
+  ({ query, only_allowed, only_bought, tag_ids, ...options }) =>
+    api.search.postsInFeed(query, { ...options, onlyAllowed: only_allowed, onlyBought: only_bought, tagIds: tag_ids })
+);
+
+tool(
+  "search_blog_posts",
+  "Full-text search of posts inside one blog, with filters by level and attached media.",
+  {
+    blog,
+    ...searchPosts,
+    level_ids: z.array(levelId).optional(),
+    has_image: z.boolean().optional(),
+    has_audio: z.boolean().optional(),
+    has_audio_file: z.boolean().optional(),
+    has_video: z.boolean().optional(),
+    has_video_file: z.boolean().optional().describe("Video hosted by Boosty"),
+    has_file: z.boolean().optional(),
+  },
+  (args) =>
+    api.search.postsInBlog(args.blog, args.query, {
+      ...page(args),
+      onlyAllowed: args.only_allowed,
+      from: args.from,
+      to: args.to,
+      subscriptionLevelIds: args.level_ids,
+      hasImage: args.has_image,
+      hasAudio: args.has_audio,
+      hasAudioFile: args.has_audio_file,
+      hasVideo: args.has_video,
+      hasVideoFile: args.has_video_file,
+      hasFile: args.has_file,
+    })
+);
+
+tool(
+  "suggest_blogs",
+  "Blog suggestions for a partial name (autocomplete).",
+  { query: z.string().min(1), limit, offset },
+  (args) => api.search.blogSuggest(args.query, page(args))
+);
+
+tool("search_feed_tags", "Feed tags matching a query.", { query: z.string().min(1), limit, offset }, (args) =>
+  api.search.feedTags(args.query, page(args))
+);
+
+// ─── Polls ──────────────────────────────────────────────
+
 const pollId = z.number().int().describe("Poll id (`poll.id` of the post)");
 const optionId = z.number().int().describe("Option id (`poll.options[].id`)");
 
 tool(
+  "get_poll",
+  "A poll of a blog with its options and counters. Experimental: the endpoint is reconstructed from the web client.",
+  { blog, poll_id: pollId, voters_limit: z.number().int().optional().describe("Voters to embed per option") },
+  (args) => api.blog.poll(args.blog, args.poll_id, { votersLimit: args.voters_limit })
+);
+
+tool(
+  "list_poll_voters",
+  "Voters of a poll, or of one of its options. Experimental: the endpoint is reconstructed from the web client.",
+  { blog, poll_id: pollId, option_id: optionId.optional(), limit, offset: skip },
+  (args) => api.blog.pollVoters(args.blog, args.poll_id, { option: args.option_id, limit: args.limit, offset: args.offset })
+);
+
+tool(
   "vote_poll",
-  "Vote for an option in a post's poll (call once per option for multiple choice). Experimental: the endpoint " +
-    "is reconstructed from the web client.",
-  { blog, poll_id: pollId, option_id: optionId },
-  (args) => api.social.voteOption(args.blog, args.poll_id, args.option_id),
+  "Vote in a post's poll with one or several options; replaces the user's earlier vote. Experimental: the " +
+    "endpoint is reconstructed from the web client.",
+  {
+    poll_id: pollId,
+    option_ids: z.array(optionId).min(1),
+    other: z.string().optional().describe('Free-text answer for polls with an "other" option'),
+    is_anonymous: z.boolean().optional(),
+  },
+  (args) => api.social.vote(args.poll_id, args.option_ids, { other: args.other, isAnonymous: args.is_anonymous }),
   "write"
 );
 
 tool(
   "unvote_poll",
-  "Withdraw the vote for an option in a post's poll. Experimental: the endpoint is reconstructed from the web client.",
-  { blog, poll_id: pollId, option_id: optionId },
-  (args) => api.social.removeVote(args.blog, args.poll_id, args.option_id),
+  "Withdraw the user's whole vote from a post's poll. Experimental: the endpoint is reconstructed from the web client.",
+  { poll_id: pollId },
+  // The blog argument is unused by boosty-api: the endpoint does not take it
+  (args) => api.social.removeVote("", args.poll_id),
   "write"
 );
 
@@ -375,7 +891,7 @@ tool(
   "list_comment_replies",
   "Replies to a comment. Experimental: the endpoint is reconstructed from the web client.",
   { blog, post_id: postId, comment_id: commentId, limit, offset },
-  (args) => api.comments.replies(args.blog, args.post_id, args.comment_id, { limit: args.limit, offset: args.offset })
+  (args) => api.comments.replies(args.blog, args.post_id, args.comment_id, page(args))
 );
 
 tool(
@@ -408,10 +924,25 @@ tool(
   "write"
 );
 
+tool(
+  "react_to_comment",
+  "Put a reaction on a comment (replaces the previous one). Experimental: the endpoint is reconstructed from the web client.",
+  { blog, post_id: postId, comment_id: commentId, reaction },
+  (args) => api.comments.react(args.blog, args.post_id, args.comment_id, args.reaction),
+  "write"
+);
+
+tool(
+  "remove_comment_reaction",
+  "Remove the user's reaction from a comment. Experimental: the endpoint is reconstructed from the web client.",
+  { blog, post_id: postId, comment_id: commentId },
+  (args) => api.comments.removeReaction(args.blog, args.post_id, args.comment_id),
+  "write"
+);
+
 // ─── Messages ───────────────────────────────────────────
 
 const dialogId = z.number().int().describe("Dialog id (from list_dialogs / get_dialog_with_user)");
-const userId = z.number().int().describe("Boosty user id");
 
 tool("list_dialogs", "Direct-message dialogs of the logged-in user with the last message of each.", { limit, offset }, (args) =>
   api.messaging.dialogs(args)
@@ -434,7 +965,7 @@ tool(
 );
 
 tool("list_messages", "Messages of a dialog.", { dialog_id: dialogId, limit, offset }, (args) =>
-  api.messaging.messages(args.dialog_id, { limit: args.limit, offset: args.offset })
+  api.messaging.messages(args.dialog_id, page(args))
 );
 
 tool(
