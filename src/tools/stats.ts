@@ -69,7 +69,9 @@ tool(
   ({ blog: blogName, ...options }) => api.stats.paymentSources(blogName, options)
 );
 
-tool("get_referral_stats", "Referral programme totals of the blog.", { blog }, (args) => api.stats.referrals(args.blog));
+tool("get_referral_stats", "Referral programme totals of the blog.", { blog }, (args) =>
+  api.stats.referrals(args.blog)
+);
 
 tool(
   "list_referral_users",

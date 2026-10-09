@@ -18,7 +18,8 @@ tool(
   "list_poll_voters",
   "Voters of a poll, or of one of its options. Experimental: the endpoint is reconstructed from the web client.",
   { blog, poll_id: pollId, option_id: optionId.optional(), limit, offset: skip },
-  (args) => api.blog.pollVoters(args.blog, args.poll_id, { option: args.option_id, limit: args.limit, offset: args.offset })
+  (args) =>
+    api.blog.pollVoters(args.blog, args.poll_id, { option: args.option_id, limit: args.limit, offset: args.offset })
 );
 
 tool(

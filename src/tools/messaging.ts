@@ -7,8 +7,11 @@ import { api, tool } from "../server.js";
 
 const dialogId = z.number().int().describe("Dialog id (from list_dialogs / get_dialog_with_user)");
 
-tool("list_dialogs", "Direct-message dialogs of the logged-in user with the last message of each.", { limit, offset }, (args) =>
-  api.messaging.dialogs(args)
+tool(
+  "list_dialogs",
+  "Direct-message dialogs of the logged-in user with the last message of each.",
+  { limit, offset },
+  (args) => api.messaging.dialogs(args)
 );
 
 tool(

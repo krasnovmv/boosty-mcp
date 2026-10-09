@@ -25,8 +25,11 @@ server.registerTool(
   }
 );
 
-tool("get_current_user", "The logged-in Boosty user (id, name, email, own blog). Also tells whether a login is active.", {}, () =>
-  api.user.current()
+tool(
+  "get_current_user",
+  "The logged-in Boosty user (id, name, email, own blog). Also tells whether a login is active.",
+  {},
+  () => api.user.current()
 );
 
 tool(
@@ -40,7 +43,12 @@ tool("list_sessions", "Devices the account is logged in on; `flags.isCurrent` ma
   api.user.sessions()
 );
 
-const transport = z.enum(["standalone", "mobile_push", "telegram", "mail"] as const satisfies readonly NotificationTransport[]);
+const transport = z.enum([
+  "standalone",
+  "mobile_push",
+  "telegram",
+  "mail",
+] as const satisfies readonly NotificationTransport[]);
 
 tool(
   "get_notification_settings",

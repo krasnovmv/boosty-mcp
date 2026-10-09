@@ -13,11 +13,8 @@ const searchPosts = {
   to: unixTime.optional(),
 };
 
-tool(
-  "search_blogs",
-  "Search Boosty blogs by name (requires login).",
-  { query: z.string(), limit, offset },
-  (args) => api.feed.searchBlogs(args.query, page(args))
+tool("search_blogs", "Search Boosty blogs by name (requires login).", { query: z.string(), limit, offset }, (args) =>
+  api.feed.searchBlogs(args.query, page(args))
 );
 
 tool(

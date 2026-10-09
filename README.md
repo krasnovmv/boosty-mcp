@@ -84,19 +84,19 @@ claude mcp add -s user boosty -- node "<PATH>"
 
 ## Инструменты
 
-| Группа | Инструменты |
-|---|---|
-| Аккаунт | `login`, `get_current_user`, `list_subscriptions`, `list_sessions`, `end_sessions`, `get_notification_settings`, `update_notification_setting`, `update_profile`, `update_dialog_settings`, `set_locale`, `list_payment_cards`, `list_blog_currencies` |
-| Блог | `get_blog`, `list_subscription_levels`, `get_subscription_level`, `list_subscribers`, `list_blacklist`, `list_unsubscribe_reasons` |
-| Цели | `list_targets`, `get_target`, `create_target`, `update_target`, `delete_target` |
-| Доход | `list_donations`, `list_post_sales`, `list_bundle_sales`, `list_holds`, `list_broadcast_sales`, `get_paid_sales_by_date`, `get_paid_sales_days`, `list_payout_methods`, `list_payouts`, `list_payout_history`, `get_default_currency` |
-| Статистика | `get_stats_summary`, `get_stats_metrics`, `get_stats_charts`, `list_stats_events`, `list_visit_sources`, `list_payment_sources`, `get_referral_stats`, `list_referral_users`, `search_subscribers`, `get_post_stats`, `build_report`, `get_report_info` |
-| Посты | `list_posts`, `get_post`, `create_post`, `update_post`, `delete_post`, `get_post_deferred_access`, `update_post_deferred_access`, `list_media`, `get_feed`, `like_post`, `unlike_post`, `react_to_post`, `remove_post_reaction` |
-| Поиск | `search_blogs`, `suggest_blogs`, `search_feed_posts`, `search_blog_posts`, `search_feed_tags` |
-| Опросы | `get_poll`, `list_poll_voters`, `vote_poll`, `unvote_poll` |
-| Комментарии | `list_comments`, `list_comment_replies`, `create_comment`, `like_comment`, `unlike_comment`, `react_to_comment`, `remove_comment_reaction` |
-| Сообщения | `list_dialogs`, `get_dialog_with_user`, `create_dialog`, `list_messages`, `send_message` |
-| Уведомления | `list_notifications`, `mark_notifications_read`, `delete_notification`, `delete_notifications` |
+| Группа      | Инструменты                                                                                                                                                                                                                                             |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Аккаунт     | `login`, `get_current_user`, `list_subscriptions`, `list_sessions`, `end_sessions`, `get_notification_settings`, `update_notification_setting`, `update_profile`, `update_dialog_settings`, `set_locale`, `list_payment_cards`, `list_blog_currencies`  |
+| Блог        | `get_blog`, `list_subscription_levels`, `get_subscription_level`, `list_subscribers`, `list_blacklist`, `list_unsubscribe_reasons`                                                                                                                      |
+| Цели        | `list_targets`, `get_target`, `create_target`, `update_target`, `delete_target`                                                                                                                                                                         |
+| Доход       | `list_donations`, `list_post_sales`, `list_bundle_sales`, `list_holds`, `list_broadcast_sales`, `get_paid_sales_by_date`, `get_paid_sales_days`, `list_payout_methods`, `list_payouts`, `list_payout_history`, `get_default_currency`                   |
+| Статистика  | `get_stats_summary`, `get_stats_metrics`, `get_stats_charts`, `list_stats_events`, `list_visit_sources`, `list_payment_sources`, `get_referral_stats`, `list_referral_users`, `search_subscribers`, `get_post_stats`, `build_report`, `get_report_info` |
+| Посты       | `list_posts`, `get_post`, `create_post`, `update_post`, `delete_post`, `get_post_deferred_access`, `update_post_deferred_access`, `list_media`, `get_feed`, `like_post`, `unlike_post`, `react_to_post`, `remove_post_reaction`                         |
+| Поиск       | `search_blogs`, `suggest_blogs`, `search_feed_posts`, `search_blog_posts`, `search_feed_tags`                                                                                                                                                           |
+| Опросы      | `get_poll`, `list_poll_voters`, `vote_poll`, `unvote_poll`                                                                                                                                                                                              |
+| Комментарии | `list_comments`, `list_comment_replies`, `create_comment`, `like_comment`, `unlike_comment`, `react_to_comment`, `remove_comment_reaction`                                                                                                              |
+| Сообщения   | `list_dialogs`, `get_dialog_with_user`, `create_dialog`, `list_messages`, `send_message`                                                                                                                                                                |
+| Уведомления | `list_notifications`, `mark_notifications_read`, `delete_notification`, `delete_notifications`                                                                                                                                                          |
 
 Доход и статистика доступны только владельцу блога; в донатах, событиях и выплатах есть e-mail и
 платёжные реквизиты.
@@ -109,5 +109,9 @@ claude mcp add -s user boosty -- node "<PATH>"
 ## Разработка
 
 ```bash
-npm test    # сборка + проверки
+npm test          # сборка + проверки
+npm run format    # prettier
 ```
+
+Инструменты лежат в `src/tools/` по группам из таблицы выше; общие аргументы — в `src/schemas.ts`,
+сервер, клиент Boosty и помощник `tool()` — в `src/server.ts`.

@@ -50,7 +50,11 @@ const postFields = {
   price: price.optional(),
   tags: z.string().optional().describe("Comma-separated tags"),
   deny_comments: z.boolean().optional().describe("Close the comments"),
-  publish_time: z.number().int().optional().describe("Unix time (seconds) to publish at; a new post without it is published now"),
+  publish_time: z
+    .number()
+    .int()
+    .optional()
+    .describe("Unix time (seconds) to publish at; a new post without it is published now"),
 };
 
 tool(
@@ -111,7 +115,7 @@ tool(
     post_id: postId,
     price,
     is_comments_denied: z.boolean(),
-    apply_time: z.number().int().describe("Unix time (seconds) when the change applies"),
+    apply_time: unixTime.describe("Unix time (seconds) when the change applies"),
   },
   (args) =>
     api.posts.updateDeferredAccess(args.blog, args.post_id, {

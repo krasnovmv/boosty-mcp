@@ -4,8 +4,11 @@ import { z } from "zod";
 import { blog, limit, offset, unixTime, order, levelId } from "../schemas.js";
 import { api, tool } from "../server.js";
 
-tool("get_blog", "Blog profile: title, description, owner, counters, whether the current user is subscribed.", { blog }, (args) =>
-  api.blog.profile(args.blog)
+tool(
+  "get_blog",
+  "Blog profile: title, description, owner, counters, whether the current user is subscribed.",
+  { blog },
+  (args) => api.blog.profile(args.blog)
 );
 
 tool(
@@ -36,7 +39,9 @@ tool(
     })
 );
 
-tool("list_blacklist", "Users blacklisted in a blog (blog owner only).", { blog }, (args) => api.blog.blacklist(args.blog));
+tool("list_blacklist", "Users blacklisted in a blog (blog owner only).", { blog }, (args) =>
+  api.blog.blacklist(args.blog)
+);
 
 tool(
   "get_subscription_level",

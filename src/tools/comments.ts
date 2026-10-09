@@ -42,7 +42,7 @@ tool(
     blog,
     post_id: postId,
     text: z.string().min(1),
-    reply_to_id: z.number().int().optional().describe("`intId` of the comment to reply to"),
+    reply_to_id: commentId.optional().describe("`intId` of the comment to reply to"),
   },
   (args) => api.comments.create(args.blog, args.post_id, [textBlock(args.text)], { replyToId: args.reply_to_id }),
   "write"

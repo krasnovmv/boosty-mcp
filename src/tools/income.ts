@@ -37,8 +37,11 @@ tool(
     api.income.bundleSales(blogName, { ...options, sortBy: sort_by, bundleIds: bundle_ids })
 );
 
-tool("list_holds", "Payments the platform still holds before they reach the balance.", { blog, limit, offset }, (args) =>
-  api.income.holds(args.blog, page(args))
+tool(
+  "list_holds",
+  "Payments the platform still holds before they reach the balance.",
+  { blog, limit, offset },
+  (args) => api.income.holds(args.blog, page(args))
 );
 
 tool(
@@ -63,7 +66,9 @@ tool(
   "Days of one month that have sales of paid posts or bundles.",
   { blog, kind: paidKind, date: unixTime.describe("Any unix time (seconds) inside the month") },
   (args) =>
-    args.kind === "post" ? api.income.postSalesDays(args.blog, args.date) : api.income.bundleSalesDays(args.blog, args.date)
+    args.kind === "post"
+      ? api.income.postSalesDays(args.blog, args.date)
+      : api.income.bundleSalesDays(args.blog, args.date)
 );
 
 tool("list_payout_methods", "Payout systems Boosty offers (system, currency).", {}, () => api.income.payoutMethods());
