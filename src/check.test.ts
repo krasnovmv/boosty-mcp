@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { textBlock } from "boosty-api";
 import { tokensFromCookies } from "./auth.js";
-import { slim } from "./slim.js";
+import { slim, textBlocks } from "./slim.js";
+
+test("textBlocks: paragraphs survive the round trip through slim", () => {
+  const text = "Hello\n\nSecond paragraph";
+  assert.deepEqual(slim({ data: textBlocks(text) }), { text, data: [] });
+});
 
 test("tokensFromCookies: signed-in boosty.to cookies give auth.json fields", () => {
   const auth = encodeURIComponent(JSON.stringify({ accessToken: "a", refreshToken: "r", expiresAt: 1790000000000 }));

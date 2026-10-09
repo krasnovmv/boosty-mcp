@@ -88,9 +88,10 @@ claude mcp add -s user boosty -- node "<PATH>"
 |---|---|
 | Аккаунт | `login`, `get_current_user` |
 | Блог | `get_blog`, `list_subscription_levels`, `list_subscribers`, `list_blacklist`, `get_sales` |
-| Посты | `list_posts`, `get_post`, `delete_post`, `list_media`, `get_feed`, `search_blogs`, `like_post`, `unlike_post` |
-| Комментарии | `list_comments`, `list_comment_replies`, `create_comment` |
+| Посты | `list_posts`, `get_post`, `create_post`, `update_post`, `delete_post`, `get_post_deferred_access`, `update_post_deferred_access`, `list_media`, `get_feed`, `search_blogs`, `like_post`, `unlike_post`, `vote_poll`, `unvote_poll` |
+| Комментарии | `list_comments`, `list_comment_replies`, `create_comment`, `like_comment`, `unlike_comment` |
 | Сообщения | `list_dialogs`, `get_dialog_with_user`, `create_dialog`, `list_messages`, `send_message` |
+| Уведомления | `list_notifications`, `mark_notifications_read`, `delete_notification`, `delete_notifications` |
 
 Списки листаются курсором: передайте `offset` из `extra.offset` предыдущей страницы.
 

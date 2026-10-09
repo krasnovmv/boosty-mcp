@@ -13,7 +13,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { API, Auth, BoostyError, FileAuthDataResolver, textBlock } from "boosty-api";
 import { z } from "zod";
 import { AUTH_FILE, browserLogin } from "./auth.js";
-import { slim } from "./slim.js";
+import { slim, textBlocks } from "./slim.js";
 
 // boosty-api logs every request with console.log, and stdout belongs to the MCP protocol
 console.log = console.error;
@@ -199,6 +199,84 @@ tool(
   (args) => api.posts.get(args.blog, args.post_id, { commentsLimit: args.comments_limit, replyLimit: args.reply_limit })
 );
 
+const price = z.number().int().min(0).describe("Access price in rubles; 0 — open to everyone");
+const postFields = {
+  teaser_text: z.string().optional().describe("Teaser shown to users without access"),
+  price: price.optional(),
+  tags: z.string().optional().describe("Comma-separated tags"),
+  deny_comments: z.boolean().optional().describe("Close the comments"),
+  publish_time: z.number().int().optional().describe("Unix time (seconds) to publish at; a new post without it is published now"),
+};
+
+tool(
+  "create_post",
+  "Publish a plain-text post in the user's own blog (line breaks become paragraphs). Experimental: the request " +
+    "body is reconstructed from the web client.",
+  { blog, title: z.string().min(1), text: z.string().min(1), ...postFields },
+  (args) =>
+    api.posts.create(args.blog, {
+      title: args.title,
+      data: textBlocks(args.text),
+      teaser_data: args.teaser_text === undefined ? undefined : textBlocks(args.teaser_text),
+      price: args.price ?? 0,
+      tags: args.tags ?? "",
+      deny_comments: args.deny_comments ?? false,
+      wait_video: false,
+      has_chat: false,
+      publish_time: args.publish_time,
+    }),
+  "write"
+);
+
+tool(
+  "update_post",
+  "Edit a post of the user's own blog; omitted fields keep their current value. `text` replaces the WHOLE " +
+    "body, media blocks included. Experimental: the request body is reconstructed from the web client.",
+  { blog, post_id: postId, title: z.string().min(1).optional(), text: z.string().min(1).optional(), ...postFields },
+  async (args) => {
+    // Boosty takes the whole post on PUT, so the fields that are not being edited come from the current one
+    const current = await api.posts.get(args.blog, args.post_id);
+    return api.posts.update(args.blog, args.post_id, {
+      title: args.title ?? current.title ?? "",
+      data: args.text === undefined ? current.data : textBlocks(args.text),
+      teaser_data: args.teaser_text === undefined ? current.teaser : textBlocks(args.teaser_text),
+      price: args.price ?? current.price ?? 0,
+      tags: args.tags ?? (current.tags ?? []).map((tag) => tag.title).join(","),
+      deny_comments: args.deny_comments ?? current.isCommentsDenied ?? false,
+      wait_video: false,
+      publish_time: args.publish_time ?? current.publishTime,
+      advertiser_info: current.advertiserInfo ?? undefined,
+    });
+  },
+  "write"
+);
+
+tool(
+  "get_post_deferred_access",
+  "Deferred access settings of a post: the price and comment settings it switches to at `applyTime`.",
+  { blog, post_id: postId },
+  (args) => api.posts.getDeferredAccess(args.blog, args.post_id)
+);
+
+tool(
+  "update_post_deferred_access",
+  "Schedule a change of a post's access: at `apply_time` it gets the given price and comment settings.",
+  {
+    blog,
+    post_id: postId,
+    price,
+    is_comments_denied: z.boolean(),
+    apply_time: z.number().int().describe("Unix time (seconds) when the change applies"),
+  },
+  (args) =>
+    api.posts.updateDeferredAccess(args.blog, args.post_id, {
+      price: args.price,
+      isCommentsDenied: args.is_comments_denied,
+      applyTime: args.apply_time,
+    }),
+  "write"
+);
+
 tool(
   "delete_post",
   "Delete a post from the user's own blog. Irreversible.",
@@ -249,7 +327,29 @@ tool(
   "write"
 );
 
+const pollId = z.number().int().describe("Poll id (`poll.id` of the post)");
+const optionId = z.number().int().describe("Option id (`poll.options[].id`)");
+
+tool(
+  "vote_poll",
+  "Vote for an option in a post's poll (call once per option for multiple choice). Experimental: the endpoint " +
+    "is reconstructed from the web client.",
+  { blog, poll_id: pollId, option_id: optionId },
+  (args) => api.social.voteOption(args.blog, args.poll_id, args.option_id),
+  "write"
+);
+
+tool(
+  "unvote_poll",
+  "Withdraw the vote for an option in a post's poll. Experimental: the endpoint is reconstructed from the web client.",
+  { blog, poll_id: pollId, option_id: optionId },
+  (args) => api.social.removeVote(args.blog, args.poll_id, args.option_id),
+  "write"
+);
+
 // ─── Comments ───────────────────────────────────────────
+
+const commentId = z.number().int().describe("`intId` of the comment");
 
 tool(
   "list_comments",
@@ -274,7 +374,7 @@ tool(
 tool(
   "list_comment_replies",
   "Replies to a comment. Experimental: the endpoint is reconstructed from the web client.",
-  { blog, post_id: postId, comment_id: z.number().int().describe("`intId` of the comment"), limit, offset },
+  { blog, post_id: postId, comment_id: commentId, limit, offset },
   (args) => api.comments.replies(args.blog, args.post_id, args.comment_id, { limit: args.limit, offset: args.offset })
 );
 
@@ -289,6 +389,22 @@ tool(
     reply_to_id: z.number().int().optional().describe("`intId` of the comment to reply to"),
   },
   (args) => api.comments.create(args.blog, args.post_id, [textBlock(args.text)], { replyToId: args.reply_to_id }),
+  "write"
+);
+
+tool(
+  "like_comment",
+  "Like a comment. Experimental: the endpoint is reconstructed from the web client.",
+  { blog, post_id: postId, comment_id: commentId },
+  (args) => api.comments.like(args.blog, args.post_id, args.comment_id),
+  "write"
+);
+
+tool(
+  "unlike_comment",
+  "Remove the like from a comment. Experimental: the endpoint is reconstructed from the web client.",
+  { blog, post_id: postId, comment_id: commentId },
+  (args) => api.comments.unlike(args.blog, args.post_id, args.comment_id),
   "write"
 );
 
@@ -327,6 +443,42 @@ tool(
   { dialog_id: dialogId, text: z.string().min(1) },
   (args) => api.messaging.sendMessage(args.dialog_id, [textBlock(args.text)]),
   "write"
+);
+
+// ─── Notifications ──────────────────────────────────────
+
+const eventId = z.number().int().describe("Notification id (`events[].id` of list_notifications)");
+const eventIds = z.array(eventId).min(1);
+
+tool(
+  "list_notifications",
+  "Notification feed of the logged-in user (the bell): new subscribers, donations etc., with unread counters.",
+  {},
+  () => api.messaging.notifications()
+);
+
+tool(
+  "mark_notifications_read",
+  "Mark notifications as read. Returns the feed with updated counters.",
+  { event_ids: eventIds },
+  (args) => api.messaging.markNotificationsRead(args.event_ids),
+  "write"
+);
+
+tool(
+  "delete_notification",
+  "Delete one notification. Experimental: the endpoint is reconstructed from the web client.",
+  { event_id: eventId },
+  (args) => api.messaging.deleteNotification(args.event_id),
+  "destructive"
+);
+
+tool(
+  "delete_notifications",
+  "Delete several notifications at once. Experimental: the endpoint is reconstructed from the web client.",
+  { event_ids: eventIds },
+  (args) => api.messaging.deleteNotifications(args.event_ids),
+  "destructive"
 );
 
 await server.connect(new StdioServerTransport());

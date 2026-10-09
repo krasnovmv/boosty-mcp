@@ -1,3 +1,5 @@
+import { type Content, textBlock } from "boosty-api";
+
 interface Block {
   type?: string;
   content?: string;
@@ -19,6 +21,12 @@ function blockText(block: Block): string {
     // Not a Draft.js fragment: nothing readable inside
   }
   return block.type === "link" && block.url && block.url !== text ? `${text} (${block.url})` : text;
+}
+
+/** The reverse of blockText: plain text → one text block per line, each closed by BLOCK_END. */
+export function textBlocks(text: string): Content[] {
+  const paragraphEnd = { type: "text", content: "", modificator: "BLOCK_END" };
+  return text.split("\n").flatMap((line) => [textBlock(line), paragraphEnd]) as Content[];
 }
 
 const isTextual = (block: Block) => block?.type === "text" || block?.type === "link";
